@@ -1,0 +1,211 @@
+---
+title: "Area Overview"
+author: "Eli Pousson"
+date: "11/15/2020"
+output: html_document
+params:
+  area_name:
+    label: "Area name/list:"
+    value: "Baltimore Highlands"
+    input: text
+  area_label:
+    label: "Area label:"
+    value: "Baltimore Highlands"
+    input: text
+  area_type:
+    label: "Area type:"
+    value: neighborhood
+    input: select
+    choices: [neighborhood, council_district, police_district, csa, block_group, tract]
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(mapbaltimore)
+
+map_theme <- ggplot2::theme_minimal() +
+  ggplot2::theme(
+    panel.grid.major = ggplot2::element_line(color = "transparent"),
+    axis.title = ggplot2::element_text(color = "transparent"),
+    axis.text = ggplot2::element_text(color = "transparent")
+  )
+
+# Load saved ACS data created by 01_import_data.R script
+overview_acs <- readRDS("data/overview_acs.rda")
+```
+
+This parameterized R Markdown document explores how to use the mapbaltimore package in combination with ggplot and the tidycensus package to create a basic profile of a neighborhood or group of neighborhoods in Baltimore, Maryland. The functions defined below (from the utils.R script) may be added to the mapbaltimore package if they prove useful.
+
+```{r, code=readLines("R/utils.R")}
+```
+
+```{r select_area}
+# Testing with multiple neighborhoods
+# selected_area_name <- c("Central Forest Park", "Concerned Citizens Of Forest Park", "Forest Park", "Forest Park Golf Course", "West Forest Park")
+# selected_area_label <- "Forest Park Planning Area"
+
+selected_area_name <- params$area_name
+selected_area_type <- params$area_type
+selected_area_label <- params$area_label
+
+# Get area
+selected_area <- get_area(area_type = selected_area_type,
+                          area_name = selected_area_name)
+
+# Get buffered area
+buffered_selected_area <- get_buffered_area(selected_area)
+buffered_selected_area_bbox <- sf::st_bbox(buffered_selected_area)
+```
+
+```{r satellite, warning=FALSE}
+# Map satellite view of the area
+area_satellite_map <- ggplot2::ggplot() +
+  snapbox::layer_mapbox(
+    area = buffered_selected_area_bbox,
+    map_style = stylebox::mapbox_satellite_streets()
+  ) +
+  ggplot2::geom_sf(
+    data = sf::st_difference(
+      sf::st_as_sfc(buffered_selected_area_bbox),
+      sf::st_union(selected_area)), # The st_union call is only required if multiple areas are provided
+    fill = "white",
+    color = "white",
+    alpha = 0.4
+    ) +
+  ggplot2::geom_sf(
+    data = selected_area,
+    fill = NA,
+    color = "black",
+    linetype = 5
+  ) +
+  map_theme
+
+# Get nearby areas
+nearby_areas <- get_nearby_areas(area = selected_area,
+                                 area_type = selected_area_type)
+
+# Map nearby areas
+nearby_areas_map <- ggplot2::ggplot() +
+  ggplot2::geom_sf(
+    data = nearby_areas,
+    ggplot2::aes(fill = name),
+    color = "white",
+    alpha = 0.4
+    ) +
+  ggplot2::scale_fill_viridis_d() +
+  ggplot2::guides(fill = "none") +
+  ggplot2::geom_sf_label(
+    data = nearby_areas,
+    ggplot2::aes(label = name),
+    fill = "white",
+    color = "black"
+    ) +
+  ggplot2::geom_sf(
+    data = selected_area,
+    fill = NA,
+    color = "black",
+    linetype = 5
+  ) +
+  map_theme
+
+area_satellite_map
+```
+
+```{r area_in_city}
+
+selected_area_union <- sf::st_sf(geometry = sf::st_union(selected_area))
+
+selected_area_union$name <- selected_area_label
+             
+area_in_city_map <- map_area_in_city(area = selected_area_union) +
+  ggplot2::theme(
+  title = ggplot2::element_text(family = "Roboto Condensed", size = 10)
+  )
+
+area_in_city_map
+
+```
+
+## Census data analysis
+
+```{r tracts, warning=FALSE}
+# Get area census tracts
+selected_area_tracts <- get_area_tracts(selected_area)
+
+# Get buffered area for tracts
+buffered_selected_area_tracts <- get_buffered_area(selected_area_tracts)
+buffered_selected_area_tracts_bbox <- sf::st_bbox(selected_area_tracts)
+
+tract_map <- ggplot2::ggplot() +
+  snapbox::layer_mapbox(
+    area = buffered_selected_area_tracts_bbox,
+    map_style = stylebox::mapbox_light()
+  ) +
+  ggplot2::geom_sf(
+    data = selected_area_tracts,
+    ggplot2::aes(fill = namelsad),
+    color = "white",
+    alpha = 0.4
+    ) +
+  ggplot2::scale_fill_viridis_d() +
+  ggplot2::geom_sf(
+    data = selected_area,
+    fill = NA,
+    color = "black",
+    linetype = 5
+  ) +
+  ggplot2::geom_sf_label(
+    data = selected_area_tracts,
+    ggplot2::aes(label = namelsad)
+  ) +
+  map_theme +
+  ggplot2::labs(
+    fill = "Tract name"
+  )
+
+tract_map
+```
+
+```{r demographics}
+
+acs_plot_theme <- ggplot2::theme(
+  axis.title = ggplot2::element_text(family = "Roboto Condensed", size = 12),
+  axis.text = ggplot2::element_text(family = "Roboto Condensed", size = 10)
+)
+
+# Plot Race
+plot_acs_table(selected_area_tracts, table_id = "B02001", level = "primary") + acs_plot_theme
+# NOTE: Not relevant for all areas
+
+# Plot Nativity and Citizenship Status in U.S. in selected area tracts
+plot_acs_table(selected_area_tracts, table_id = "B05001", level = "primary") + acs_plot_theme
+
+# Plot Hispanic or Latino By Race
+# plot_acs_table(selected_area_tracts, table_id = "B03002", level = "secondary")
+
+# Plot Hispanic or Latino Origin
+plot_acs_table(selected_area_tracts, table_id = "B03003", level = "primary") + acs_plot_theme
+
+```
+
+```{r housing}
+# Plot Occupancy Status
+plot_acs_table(selected_area_tracts, table_id = "B25002", level = "primary") + acs_plot_theme
+
+# Plot Tenure
+plot_acs_table(selected_area_tracts, table_id = "B25003", level = "primary") + acs_plot_theme
+
+# Plot Rooms
+plot_acs_table(selected_area_tracts, table_id = "B25017", level = "primary") + acs_plot_theme
+
+# Plot Number of Units
+plot_acs_table(selected_area_tracts, table_id = "B25024", level = "primary") + acs_plot_theme
+
+# Plot Year Built
+plot_acs_table(selected_area_tracts, table_id = "B25034", level = "primary") + acs_plot_theme
+
+# Plot home value
+plot_acs_table(selected_area_tracts, table_id = "B25075", level = "primary") + acs_plot_theme
+```
+
